@@ -1,0 +1,22 @@
+# Binaries
+/slack-fetcher
+/bin/
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+
+# Test and coverage artifacts
+*.test
+*.out
+coverage.txt
+
+# Local temporary output
+/tmp/
+.DS_Store
+
+# Environment / local credentials
+.env
+.env.*
+oauth_creds.json
