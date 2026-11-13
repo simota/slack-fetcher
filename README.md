@@ -1,13 +1,11 @@
 # slack-fetcher
 
-SlackスレッドのURLを受け取り、Slack Web API経由でスレッド内の全メッセージと添付ファイルを取得し、ローカルLLMエージェント（Claude Code 等）向けの**YAMLフロントマター付き構造化Markdown**へ変換するCLIツールです。
+SlackスレッドのURLを受け取り、Slack Web API経由でスレッド内の全メッセージと添付ファイルを取得し、ローカルLLMエージェント（Claude Code 等）向けのYAMLフロントマター付き構造化Markdownへ変換するCLIツールです。
 
-- **テキスト系添付ファイル**（`snippet` / `text/*` / JSON / YAML / XML 等、既定 `256 KiB` 以下かつ有効なUTF-8）はコードブロックとしてMarkdown内にインライン展開します。
-- **バイナリ添付ファイル**（PDF・画像・Office文書・アーカイブ・上限超過テキスト等）はローカルディレクトリへ保存し、Markdown内からは絶対パス・MIMEタイプ・サイズを参照します。
+- テキスト系添付ファイル（`snippet` / `text/*` / JSON / YAML / XML 等、既定 `256 KiB` 以下かつ有効なUTF-8）はコードブロックとしてMarkdown内にインライン展開します。
+- バイナリ添付ファイル（PDF・画像・Office文書・アーカイブ・上限超過テキスト等）はローカルディレクトリへ保存し、Markdown内からは絶対パス・MIMEタイプ・サイズを参照します。
 
 設計判断とスコープ境界は [docs/plans/slack-fetcher-cli.md](docs/plans/slack-fetcher-cli.md) を参照してください。
-
----
 
 ## ビルド・インストール
 
@@ -26,42 +24,9 @@ go build \
 go install ./cmd/slack-fetcher
 ```
 
----
+## ログインと認証情報の管理
 
-## 認証セットアップ（ワークスペース共有運用）
-
-### 1. 管理者による Slack App 作成（対象ワークスペースで1回のみ）
-
-管理者が対象ワークスペースに Slack App を1つ作成して承認すると、各メンバーは個別にアプリを作成せず `slack-fetcher auth login` だけで自分自身の権限の User Token (`xoxp-` / `xoxe.xoxp-`) を取得できます。
-
-1. Slack API 管理画面（Your Apps -> Create New App -> From a manifest）で以下のマニフェストを用いてアプリを作成します。
-2. App設定画面の **OAuth & Permissions** で **PKCE を有効化（Public Client 化）** します（`client_secret` を配布バイナリに含めず安全にトークン交換するため。なお PKCE 有効化は不可逆設定であり、リフレッシュトークンは30日間有効・CLIが自動更新します）。
-3. 確認した **Client ID** を上記 `-ldflags` でバイナリに埋め込んで配布するか、メンバーへ `SLACK_CLIENT_ID` として共有します。
-
-```yaml
-display_information:
-  name: slack-fetcher
-  description: Read Slack threads and attachments into structured Markdown
-oauth_config:
-  redirect_urls:
-    - http://localhost:53682/callback
-  scopes:
-    user:
-      - channels:history
-      - files:read
-      - users:read
-      - groups:history
-      - im:history
-      - mpim:history
-settings:
-  org_deploy_enabled: false
-  socket_mode_enabled: false
-  token_rotation_enabled: false
-```
-
-### 2. 利用者によるログイン
-
-プロセス一覧からの漏洩を防ぐため `--token` フラグは提供していません。以下のいずれかで認証してください。
+プロセス一覧からの漏洩を防ぐため、`--token` フラグは提供していません。PKCE ログイン（未設定時は末尾の「ワークスペース管理者向け: Slack App 作成手順」を参照）、標準入力からの手動保存、または環境変数 `SLACK_TOKEN` のいずれかで認証します。
 
 ```sh
 # 方法1: ブラウザで OAuth PKCE ログイン（Client ID 埋め込み済みバイナリの場合）
@@ -83,11 +48,10 @@ slack-fetcher auth status
 slack-fetcher auth logout
 ```
 
-**認証情報の保存先**:
-- **macOS**: macOS Keychain（サービス名 `slack-fetcher`、環境変数 `SLACK_FETCHER_KEYCHAIN_SERVICE` で変更可）
-- **Linux / Windows**: `$XDG_CONFIG_HOME/slack-fetcher/credentials.json` または OS 標準設定ディレクトリ配下（パーミッション `0600`）
-
----
+| OS | 認証情報の保存先 | 補足 |
+|---|---|---|
+| macOS | macOS Keychain | サービス名 `slack-fetcher`（環境変数 `SLACK_FETCHER_KEYCHAIN_SERVICE` で変更可） |
+| Linux / Windows | `$XDG_CONFIG_HOME/slack-fetcher/credentials.json` または OS 標準設定ディレクトリ配下 | パーミッション `0600` |
 
 ## 使い方
 
@@ -123,3 +87,32 @@ slack-fetcher \
 - `2`: 引数不正・URL形式不正
 - `3`: 認証・権限エラー（未認証、`invalid_auth`, `token_expired`, `missing_scope`, `not_in_channel`）
 - `4`: スレッド不在（`thread_not_found`, `channel_not_found`）またはリトライ上限超過等の通信・入出力失敗
+
+## ワークスペース管理者向け: Slack App 作成手順
+
+管理者が対象ワークスペースに Slack App を1つ作成して承認すると、各メンバーは個別にアプリを作成せず `slack-fetcher auth login` だけで自分自身の権限の User Token (`xoxp-` / `xoxe.xoxp-`) を取得できます。
+
+1. Slack API 管理画面（Your Apps -> Create New App -> From a manifest）で以下のマニフェストを使ってアプリを作成します。
+2. App設定画面の **OAuth & Permissions** で PKCE を有効化（Public Client 化）します。`client_secret` を配布バイナリに含めずにトークン交換を安全に行うための設定で、一度有効化すると元に戻せません。リフレッシュトークンは30日間有効で、CLIが自動更新します。
+3. 確認した Client ID を「ビルド・インストール」の `-ldflags` でバイナリに埋め込んで配布するか、メンバーへ `SLACK_CLIENT_ID` として共有します。
+
+```yaml
+display_information:
+  name: slack-fetcher
+  description: Read Slack threads and attachments into structured Markdown
+oauth_config:
+  redirect_urls:
+    - http://localhost:53682/callback
+  scopes:
+    user:
+      - channels:history
+      - files:read
+      - users:read
+      - groups:history
+      - im:history
+      - mpim:history
+settings:
+  org_deploy_enabled: false
+  socket_mode_enabled: false
+  token_rotation_enabled: false
+```

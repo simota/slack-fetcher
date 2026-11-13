@@ -1,23 +1,27 @@
 # Slack Thread Fetcher CLI 設計判断記録 (`slack-fetcher`)
 
-> CLIの使い方・フラグ・終了コード契約は [README.md](../../README.md) と各パッケージの実装・テストを参照してください。本ドキュメントはコードから読み取れない**スコープ境界**と**設計判断の理由・撤回条件**のみを記録します。
+CLIの使い方・フラグ・終了コード契約は [README.md](../../README.md) と各パッケージの実装・テストを参照すること。本ドキュメントにはコードから読み取れないスコープ境界、設計判断の理由と撤回条件のみを記録する。
 
 ## 1. 用語定義・スコープ境界
 
-### 用語定義 (`Terms`)
-- **テキスト系添付 (`InlineAttachment`)**: `file.mode == "snippet"`、またはテキスト系MIMEタイプ（`text/*`, JSON, XML, YAML, JS/TS, SQL 等）に該当し、`--max-inline-bytes` 以下かつ有効なUTF-8である添付ファイル。構造化Markdown内にコードブロックとしてインライン展開する。
-- **バイナリ添付 (`SavedAttachment`)**: PDF・画像・Office文書・アーカイブ等の非テキストファイル、またはインライン上限超過・非UTF-8の添付ファイル（単一上限 `--max-download-bytes`）。ローカルディレクトリへ保存し、Markdown内からは絶対パス・MIMEタイプ・サイズを参照する。
+### 用語定義
 
-### スコープ外 (`Excludes`)
-- **バイナリからのテキスト抽出・OCR**: PDF/DOCXパースや画像OCRはCLI内で行わない（マルチモーダル対応ローカルLLM側が保存先パスを直接読む前提）。
-- **`--token` CLIフラグ**: `ps` 等のプロセス一覧からトークンが漏洩するため提供しない（手動登録は `--token-stdin` を使用）。
-- **公開配布向け OAuth 中継サーバーと `client_secret` のバイナリ埋め込み**: 各ワークスペース内での運用を前提とするため外部Webサーバーは持たず、Public Client PKCE（`client_id` + `code_verifier`）のみを採用する。
-- **スレッド外検索・横断クロール・永続キャッシュ**: `conversations.history` やDBキャッシュは持たず、1コマンド＝1スレッド取得のステートレス実行に限定する。
-- **LLM APIの直接呼び出し**: UNIXパイプやファイル渡しで任意のLLM CLIと組み合わせるため、本ツール自体はLLM SDKを持たない。
+| 用語 | 定義 |
+|---|---|
+| テキスト系添付 (`InlineAttachment`) | `file.mode == "snippet"`、またはテキスト系MIMEタイプ（`text/*`, JSON, XML, YAML, JS/TS, SQL 等）に該当し、`--max-inline-bytes` 以下かつ有効なUTF-8である添付ファイル。構造化Markdown内にコードブロックとしてインライン展開する。 |
+| バイナリ添付 (`SavedAttachment`) | PDF・画像・Office文書・アーカイブ等の非テキストファイル、またはインライン上限超過・非UTF-8の添付ファイルで、単一上限は `--max-download-bytes` とする。ローカルディレクトリへ保存し、Markdown内からは絶対パス・MIMEタイプ・サイズを参照する。 |
 
----
+### スコープ外
 
-## 2. アーキテクチャ意思決定 (`Decisions`)
+| 対象外 | 理由 |
+|---|---|
+| バイナリからのテキスト抽出・OCR | PDF/DOCXパースや画像OCRはCLI内で行わず、マルチモーダル対応ローカルLLM側が保存先パスを直接読む前提とする。 |
+| `--token` CLIフラグ | `ps` 等のプロセス一覧からトークンが漏洩するため提供しない。手動登録には `--token-stdin` を使う。 |
+| 公開配布向け OAuth 中継サーバーと `client_secret` のバイナリ埋め込み | 各ワークスペース内での運用を前提とするため外部Webサーバーは持たず、Public Client PKCE（`client_id` + `code_verifier`）のみを採用する。 |
+| スレッド外検索・横断クロール・永続キャッシュ | `conversations.history` やDBキャッシュは持たず、1コマンド＝1スレッド取得のステートレス実行に限定する。 |
+| LLM APIの直接呼び出し | UNIXパイプやファイル渡しで任意のLLM CLIと組み合わせるため、本ツール自体はLLM SDKを持たない。 |
+
+## 2. アーキテクチャ意思決定
 
 ### Decision 1: 実装言語とランタイム
 ```text
@@ -51,11 +55,11 @@ Costs: 下流で厳密なスキーマ再パースを行うプログラム連携�
 Revisit if: LLMではなく機械的なデータ収集基盤が主たる呼び出し元となり、`--format json` が必要になった場合。
 ```
 
----
+## 3. 最重要前提と実環境での検証方法
 
-## 3. 最重要前提と実環境での検証方法 (`Falsification`)
+対象Slackワークスペースにおいて、利用者が `channels:history`, `files:read`, `users:read`（必要に応じて `groups:history`, `im:history`, `mpim:history`）を持つトークンを発行でき、`conversations.replies` と `url_private_download` が管理者ポリシー（アプリ承認制限やEnterprise GridのファイルDL制限）で遮断されないことが前提である。
 
-- **最重要前提**: 対象Slackワークスペースにおいて、利用者が `channels:history`, `files:read`, `users:read`（必要に応じて `groups:history`, `im:history`, `mpim:history`）を持つトークンを発行でき、`conversations.replies` と `url_private_download` が管理者ポリシー（アプリ承認制限やEnterprise GridのファイルDL制限）で遮断されないこと。
-- **安価な検証方法**: 実スレッド1件に対して `curl` で以下2点を確認する。いずれかが失敗する場合、Slack Web API方式自体が不成立となるため設計を見直す。
-  1. `GET https://slack.com/api/conversations.replies?channel=<CHANNEL_ID>&ts=<THREAD_TS>&limit=5`（`Authorization: Bearer $SLACK_TOKEN`）が `"ok": true` と `files[].url_private_download` を返すこと。
-  2. 取得した `url_private_download` への認証付きGETがHTMLログイン画面へ飛ばされず、実ファイルバイト列（`200 OK`）を返すこと。
+少ない手間で成立性を確かめるため、実スレッド1件に対して `curl` で以下2点を確認する。いずれかが失敗する場合、Slack Web API方式自体が不成立となるため設計を見直す。
+
+1. `GET https://slack.com/api/conversations.replies?channel=<CHANNEL_ID>&ts=<THREAD_TS>&limit=5`（`Authorization: Bearer $SLACK_TOKEN`）が `"ok": true` と `files[].url_private_download` を返すこと。
+2. 取得した `url_private_download` への認証付きGETがHTMLログイン画面へ飛ばされず、実ファイルバイト列（`200 OK`）を返すこと。
